@@ -249,3 +249,231 @@
     }
 )
 
+
+
+;; Define map for tracking impact metrics
+(define-map impact-metrics
+    { project-id: uint }
+    {
+        beneficiaries-reached: uint,
+        communities-served: uint,
+        last-updated: uint
+    }
+)
+
+(define-public (update-impact-metrics 
+    (project-id uint) 
+    (beneficiaries uint) 
+    (communities uint))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (if (is-eq tx-sender (get beneficiary project))
+            (begin
+                (map-set impact-metrics
+                    {project-id: project-id}
+                    {
+                        beneficiaries-reached: beneficiaries,
+                        communities-served: communities,
+                        last-updated: stacks-block-height
+                    }
+                )
+                (ok true))
+            err-owner-only)
+        err-not-found))
+
+(define-read-only (get-impact-metrics (project-id uint))
+    (map-get? impact-metrics {project-id: project-id}))
+
+
+;; Define variables and maps for tags
+(define-data-var tag-count uint u0)
+
+(define-map project-tags
+    { project-id: uint, tag-id: uint }
+    { tag-name: (string-ascii 20) }
+)
+
+(define-public (add-project-tag (project-id uint) (tag-name (string-ascii 20)))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (let ((new-tag-id (+ (var-get tag-count) u1)))
+            (begin
+                (map-set project-tags
+                    {project-id: project-id, tag-id: new-tag-id}
+                    {tag-name: tag-name}
+                )
+                (var-set tag-count new-tag-id)
+                (ok true)))
+        err-not-found))
+
+(define-read-only (get-project-tags (project-id uint) (tag-id uint))
+    (map-get? project-tags {project-id: project-id, tag-id: tag-id}))
+
+
+
+;; Define variables and maps for messages
+(define-data-var message-count uint u0)
+
+(define-map donor-messages
+    { message-id: uint }
+    {
+        sender: principal,
+        recipient: principal,
+        project-id: uint,
+        content: (string-ascii 500),
+        timestamp: uint
+    }
+)
+
+(define-public (send-message 
+    (recipient principal) 
+    (project-id uint) 
+    (content (string-ascii 500)))
+    (let ((message-id (+ (var-get message-count) u1)))
+        (begin
+            (map-set donor-messages
+                {message-id: message-id}
+                {
+                    sender: tx-sender,
+                    recipient: recipient,
+                    project-id: project-id,
+                    content: content,
+                    timestamp: stacks-block-height
+                }
+            )
+            (var-set message-count message-id)
+            (ok true))))
+
+(define-read-only (get-message (message-id uint))
+    (map-get? donor-messages {message-id: message-id}))
+
+
+;; Define variables and maps for progress tracking
+(define-data-var progress-update-count uint u0)
+
+(define-map project-progress
+    { project-id: uint, update-id: uint }
+    {
+        percentage-complete: uint,
+        funds-used: uint,
+        update-notes: (string-ascii 500),
+        timestamp: uint
+    }
+)
+
+(define-public (add-progress-update 
+    (project-id uint) 
+    (percentage uint) 
+    (funds-used uint)
+    (notes (string-ascii 500)))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (if (is-eq tx-sender (get beneficiary project))
+            (let ((update-id (+ (var-get progress-update-count) u1)))
+                (begin
+                    (map-set project-progress
+                        {project-id: project-id, update-id: update-id}
+                        {
+                            percentage-complete: percentage,
+                            funds-used: funds-used,
+                            update-notes: notes,
+                            timestamp: stacks-block-height
+                        }
+                    )
+                    (var-set progress-update-count update-id)
+                    (ok true)))
+            err-owner-only)
+        err-not-found))
+
+
+;; Define maps for budget tracking
+(define-map project-budgets
+    { project-id: uint }
+    {
+        total-budget: uint,
+        allocated-funds: uint,
+        remaining-funds: uint,
+        last-updated: uint
+    }
+)
+
+(define-public (set-project-budget 
+    (project-id uint) 
+    (total-budget uint))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (if (is-eq tx-sender (get beneficiary project))
+            (begin
+                (map-set project-budgets
+                    {project-id: project-id}
+                    {
+                        total-budget: total-budget,
+                        allocated-funds: u0,
+                        remaining-funds: total-budget,
+                        last-updated: stacks-block-height
+                    }
+                )
+                (ok true))
+            err-owner-only)
+        err-not-found))
+
+(define-read-only (get-project-budget (project-id uint))
+    (map-get? project-budgets {project-id: project-id}))
+
+
+;; Define variables and maps for timeline events
+(define-data-var event-count uint u0)
+
+(define-map timeline-events
+    { project-id: uint, event-id: uint }
+    {
+        event-name: (string-ascii 50),
+        description: (string-ascii 200),
+        target-date: uint,
+        completed: bool,
+        completion-date: (optional uint)
+    }
+)
+
+(define-public (add-timeline-event 
+    (project-id uint) 
+    (name (string-ascii 50))
+    (description (string-ascii 200))
+    (target-date uint))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (if (is-eq tx-sender (get beneficiary project))
+            (let ((event-id (+ (var-get event-count) u1)))
+                (begin
+                    (map-set timeline-events
+                        {project-id: project-id, event-id: event-id}
+                        {
+                            event-name: name,
+                            description: description,
+                            target-date: target-date,
+                            completed: false,
+                            completion-date: none
+                        }
+                    )
+                    (var-set event-count event-id)
+                    (ok true)))
+            err-owner-only)
+        err-not-found))
+
+(define-public (mark-event-complete 
+    (project-id uint) 
+    (event-id uint))
+    (match (map-get? timeline-events {project-id: project-id, event-id: event-id})
+        event
+        (begin
+            (map-set timeline-events
+                {project-id: project-id, event-id: event-id}
+                (merge event {
+                    completed: true,
+                    completion-date: (some stacks-block-height)
+                })
+            )
+            (ok true))
+        err-not-found))
+
+
