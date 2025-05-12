@@ -477,3 +477,114 @@
         err-not-found))
 
 
+
+
+(define-map matching-pools
+    { pool-id: uint }
+    {
+        creator: principal,
+        project-id: uint,
+        match-ratio: uint,
+        remaining-funds: uint,
+        active: bool
+    }
+)
+
+(define-data-var pool-count uint u0)
+
+(define-public (create-matching-pool (project-id uint) (match-ratio uint) (total-funds uint))
+    (let ((pool-id (+ (var-get pool-count) u1)))
+        (try! (stx-transfer? total-funds tx-sender (as-contract tx-sender)))
+        (map-set matching-pools
+            { pool-id: pool-id }
+            {
+                creator: tx-sender,
+                project-id: project-id,
+                match-ratio: match-ratio,
+                remaining-funds: total-funds,
+                active: true
+            }
+        )
+        (var-set pool-count pool-id)
+        (ok pool-id)))
+
+(define-public (process-matching (pool-id uint) (donation-amount uint))
+    (match (map-get? matching-pools {pool-id: pool-id})
+        pool
+        (let ((match-amount (/ (* donation-amount (get match-ratio pool)) u100)))
+            (if (and 
+                (get active pool)
+                (<= match-amount (get remaining-funds pool)))
+                (begin
+                    (try! (as-contract (stx-transfer? match-amount tx-sender (get beneficiary (unwrap! (map-get? projects {project-id: (get project-id pool)}) err-not-found)))))
+                    (map-set matching-pools
+                        {pool-id: pool-id}
+                        (merge pool {remaining-funds: (- (get remaining-funds pool) match-amount)}))
+                    (ok match-amount))
+                (ok u0)))
+        (ok u0)))
+
+
+
+(define-map project-kpis
+    { project-id: uint }
+    {
+        target-beneficiaries: uint,
+        target-completion-date: uint,
+        target-funding: uint,
+        success-threshold: uint
+    }
+)
+
+(define-map project-reports
+    { project-id: uint, report-id: uint }
+    {
+        beneficiaries-reached: uint,
+        funds-utilized: uint,
+        completion-percentage: uint,
+        report-date: uint
+    }
+)
+
+(define-data-var report-count uint u0)
+
+(define-public (set-project-kpis 
+    (project-id uint) 
+    (beneficiaries uint)
+    (completion-date uint)
+    (funding uint)
+    (threshold uint))
+    (match (map-get? projects {project-id: project-id})
+        project
+        (if (is-eq tx-sender (get beneficiary project))
+            (begin
+                (map-set project-kpis
+                    {project-id: project-id}
+                    {
+                        target-beneficiaries: beneficiaries,
+                        target-completion-date: completion-date,
+                        target-funding: funding,
+                        success-threshold: threshold
+                    }
+                )
+                (ok true))
+            err-owner-only)
+        err-not-found))
+
+(define-public (submit-progress-report
+    (project-id uint)
+    (beneficiaries uint)
+    (funds uint)
+    (completion uint))
+    (let ((report-id (+ (var-get report-count) u1)))
+        (map-set project-reports
+            {project-id: project-id, report-id: report-id}
+            {
+                beneficiaries-reached: beneficiaries,
+                funds-utilized: funds,
+                completion-percentage: completion,
+                report-date: stacks-block-height
+            }
+        )
+        (var-set report-count report-id)
+        (ok true)))
