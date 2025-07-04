@@ -588,3 +588,144 @@
         )
         (var-set report-count report-id)
         (ok true)))
+
+(define-constant badge-bronze-threshold u10000)
+(define-constant badge-silver-threshold u50000)
+(define-constant badge-gold-threshold u100000)
+(define-constant badge-platinum-threshold u500000)
+(define-constant badge-diamond-threshold u1000000)
+
+(define-constant badge-bronze u1)
+(define-constant badge-silver u2)
+(define-constant badge-gold u3)
+(define-constant badge-platinum u4)
+(define-constant badge-diamond u5)
+
+(define-map donor-reputation
+    { donor: principal }
+    {
+        total-donated: uint,
+        projects-supported: uint,
+        donation-frequency: uint,
+        reputation-score: uint,
+        highest-badge: uint,
+        last-activity: uint
+    }
+)
+
+(define-map donor-badges
+    { donor: principal, badge-type: uint }
+    {
+        earned-date: uint,
+        badge-level: uint
+    }
+)
+
+(define-data-var reputation-multiplier uint u100)
+
+(define-public (calculate-reputation-score (donor principal))
+    (let ((reputation-data (default-to 
+            { total-donated: u0, projects-supported: u0, donation-frequency: u0, reputation-score: u0, highest-badge: u0, last-activity: u0 }
+            (map-get? donor-reputation {donor: donor}))))
+        (let ((total-donated (get total-donated reputation-data))
+              (projects-supported (get projects-supported reputation-data))
+              (donation-frequency (get donation-frequency reputation-data))
+              (base-score (/ total-donated u1000))
+              (diversity-bonus (* projects-supported u10))
+              (frequency-bonus (* donation-frequency u5))
+              (final-score (+ base-score diversity-bonus frequency-bonus)))
+            (map-set donor-reputation
+                {donor: donor}
+                (merge reputation-data {
+                    reputation-score: final-score,
+                    last-activity: stacks-block-height
+                }))
+            (ok final-score))))
+
+(define-public (update-donor-reputation (donor principal) (amount uint) (is-new-project bool))
+    (let ((current-reputation (default-to 
+            { total-donated: u0, projects-supported: u0, donation-frequency: u0, reputation-score: u0, highest-badge: u0, last-activity: u0 }
+            (map-get? donor-reputation {donor: donor}))))
+        (let ((new-total (+ (get total-donated current-reputation) amount))
+              (new-projects (if is-new-project (+ (get projects-supported current-reputation) u1) (get projects-supported current-reputation)))
+              (new-frequency (+ (get donation-frequency current-reputation) u1)))
+            (map-set donor-reputation
+                {donor: donor}
+                {
+                    total-donated: new-total,
+                    projects-supported: new-projects,
+                    donation-frequency: new-frequency,
+                    reputation-score: (get reputation-score current-reputation),
+                    highest-badge: (get highest-badge current-reputation),
+                    last-activity: stacks-block-height
+                })
+            (unwrap! (calculate-reputation-score donor) err-not-found)
+            (try! (check-and-award-badges donor new-total))
+            (ok true))))
+
+(define-public (check-and-award-badges (donor principal) (total-donated uint))
+    (let ((current-reputation (unwrap! (map-get? donor-reputation {donor: donor}) err-not-found)))
+        (let ((current-badge (get highest-badge current-reputation)))
+            (if (and (>= total-donated badge-diamond-threshold) (< current-badge badge-diamond))
+                (begin
+                    (map-set donor-badges
+                        {donor: donor, badge-type: badge-diamond}
+                        {earned-date: stacks-block-height, badge-level: badge-diamond})
+                    (map-set donor-reputation
+                        {donor: donor}
+                        (merge current-reputation {highest-badge: badge-diamond}))
+                    (ok badge-diamond))
+                (if (and (>= total-donated badge-platinum-threshold) (< current-badge badge-platinum))
+                    (begin
+                        (map-set donor-badges
+                            {donor: donor, badge-type: badge-platinum}
+                            {earned-date: stacks-block-height, badge-level: badge-platinum})
+                        (map-set donor-reputation
+                            {donor: donor}
+                            (merge current-reputation {highest-badge: badge-platinum}))
+                        (ok badge-platinum))
+                    (if (and (>= total-donated badge-gold-threshold) (< current-badge badge-gold))
+                        (begin
+                            (map-set donor-badges
+                                {donor: donor, badge-type: badge-gold}
+                                {earned-date: stacks-block-height, badge-level: badge-gold})
+                            (map-set donor-reputation
+                                {donor: donor}
+                                (merge current-reputation {highest-badge: badge-gold}))
+                            (ok badge-gold))
+                        (if (and (>= total-donated badge-silver-threshold) (< current-badge badge-silver))
+                            (begin
+                                (map-set donor-badges
+                                    {donor: donor, badge-type: badge-silver}
+                                    {earned-date: stacks-block-height, badge-level: badge-silver})
+                                (map-set donor-reputation
+                                    {donor: donor}
+                                    (merge current-reputation {highest-badge: badge-silver}))
+                                (ok badge-silver))
+                            (if (and (>= total-donated badge-bronze-threshold) (< current-badge badge-bronze))
+                                (begin
+                                    (map-set donor-badges
+                                        {donor: donor, badge-type: badge-bronze}
+                                        {earned-date: stacks-block-height, badge-level: badge-bronze})
+                                    (map-set donor-reputation
+                                        {donor: donor}
+                                        (merge current-reputation {highest-badge: badge-bronze}))
+                                    (ok badge-bronze))
+                                (ok u0)))))))))
+
+(define-read-only (get-donor-reputation (donor principal))
+    (map-get? donor-reputation {donor: donor}))
+
+(define-read-only (get-donor-badge (donor principal) (badge-type uint))
+    (map-get? donor-badges {donor: donor, badge-type: badge-type}))
+
+(define-read-only (get-reputation-rank (donor principal))
+    (match (map-get? donor-reputation {donor: donor})
+        reputation
+        (let ((score (get reputation-score reputation)))
+            (if (>= score u10000) "Elite Philanthropist"
+                (if (>= score u5000) "Major Contributor"
+                    (if (>= score u1000) "Active Supporter"
+                        (if (>= score u100) "Community Member"
+                            "New Donor")))))
+        "Unranked"))
